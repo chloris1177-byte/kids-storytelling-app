@@ -3,12 +3,14 @@ import tempfile
 import streamlit as st
 from PIL import Image
 from gtts import gTTS
-from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration
+from transformers import (
+    pipeline,
+    VisionEncoderDecoderModel,
+    ViTImageProcessor,
+    AutoTokenizer
+)
 
 
-# --------------------------------------------------
-# Page config
-# --------------------------------------------------
 st.set_page_config(
     page_title="Kids Storytelling App",
     page_icon="📚",
@@ -19,19 +21,20 @@ st.title("📚 Kids Storytelling App")
 st.write("Upload an image and generate a fun children's story with audio!")
 
 
-# --------------------------------------------------
-# Load image caption model
-# --------------------------------------------------
 @st.cache_resource
-def load_blip_model():
-    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-    return processor, model
+def load_caption_model():
+    model = VisionEncoderDecoderModel.from_pretrained(
+        "nlpconnect/vit-gpt2-image-captioning"
+    )
+    feature_extractor = ViTImageProcessor.from_pretrained(
+        "nlpconnect/vit-gpt2-image-captioning"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        "nlpconnect/vit-gpt2-image-captioning"
+    )
+    return model, feature_extractor, tokenizer
 
 
-# --------------------------------------------------
-# Load story generation pipeline
-# --------------------------------------------------
 @st.cache_resource
 def load_story_pipeline():
     return pipeline(
@@ -40,22 +43,33 @@ def load_story_pipeline():
     )
 
 
-# --------------------------------------------------
-# Function 1: Image to text
-# --------------------------------------------------
 def img2text(uploaded_image):
-    processor, model = load_blip_model()
+    model, feature_extractor, tokenizer = load_caption_model()
 
-    inputs = processor(images=uploaded_image, return_tensors="pt")
-    output = model.generate(**inputs, max_new_tokens=30)
-    caption = processor.decode(output[0], skip_special_tokens=True)
+    if uploaded_image.mode != "RGB":
+        uploaded_image = uploaded_image.convert("RGB")
 
+    pixel_values = feature_extractor(
+        images=[uploaded_image],
+        return_tensors="pt"
+    ).pixel_values
+
+    output_ids = model.generate(
+        pixel_values,
+        max_length=30,
+        num_beams=5,
+        num_return_sequences=3
+    )
+
+    captions = [
+        tokenizer.decode(ids, skip_special_tokens=True).strip()
+        for ids in output_ids
+    ]
+
+    caption = max(captions, key=len)
     return caption
 
 
-# --------------------------------------------------
-# Function 2: Generate story
-# --------------------------------------------------
 def text2story(caption):
     story_generator = load_story_pipeline()
 
@@ -72,9 +86,9 @@ def text2story(caption):
         prompt,
         max_new_tokens=120,
         do_sample=True,
-        temperature=0.8,
-        top_k=40,
-        top_p=0.9,
+        temperature=0.9,
+        top_k=50,
+        top_p=0.95,
         num_return_sequences=1
     )
 
@@ -86,30 +100,18 @@ def text2story(caption):
         else:
             story = full_text.strip()
 
-        # fallback if generated text is too short
-        if len(story.split()) < 30:
-            story = (
-                f"One sunny day, {caption} became the start of a wonderful adventure. "
-                f"Everyone looked with excitement and smiled with joy. "
-                f"Soon, they discovered something fun and magical. "
-                f"They laughed, helped one another, and had a lovely time together. "
-                f"At the end of the day, everyone felt happy, warm, and ready for another adventure tomorrow."
-            )
+        if len(story.split()) >= 30:
+            return story
 
-        return story
-
-    # final fallback
     return (
-        f"One sunny day, {caption} inspired a happy little adventure. "
-        f"Everything felt bright and exciting. "
-        f"There was laughter, kindness, and a wonderful surprise along the way. "
-        f"In the end, everyone smiled and learned that even a simple moment can become a beautiful story."
+        f"There was once {caption}. "
+        f"It was a lovely moment, full of curiosity and joy. "
+        f"Soon, a little adventure began, bringing smiles and surprises. "
+        f"Everyone worked together, helped one another, and had lots of fun. "
+        f"In the end, it became a beautiful memory with a happy ending."
     )
 
 
-# --------------------------------------------------
-# Function 3: Text to audio
-# --------------------------------------------------
 def text2audio(story_text):
     tts = gTTS(text=story_text, lang="en")
     temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -117,18 +119,11 @@ def text2audio(story_text):
     return temp_audio.name
 
 
-# --------------------------------------------------
-# Upload image
-# --------------------------------------------------
 uploaded_file = st.file_uploader(
     "Upload an image",
     type=["jpg", "jpeg", "png"]
 )
 
-
-# --------------------------------------------------
-# Main app
-# --------------------------------------------------
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="Uploaded Image", use_container_width=True)
