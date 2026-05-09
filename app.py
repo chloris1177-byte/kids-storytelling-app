@@ -73,6 +73,15 @@ def img2text(uploaded_image):
 # --------------------------------------------------
 # Helper: check repetitive output
 # --------------------------------------------------
+def clean_caption(caption):
+    caption = caption.strip()
+    remove_words = ["illustration", "drawing", "cartoon", "painting"]
+    words = caption.split()
+    words = [w for w in words if w.lower() not in remove_words]
+    cleaned = " ".join(words).strip()
+    return cleaned if cleaned else caption
+
+
 def is_too_repetitive(text):
     words = text.lower().split()
     if len(words) < 15:
@@ -82,21 +91,21 @@ def is_too_repetitive(text):
     return unique_ratio < 0.30
 
 
-# --------------------------------------------------
-# Function 2: Text to story
-# --------------------------------------------------
 def text2story(caption):
     tokenizer, model = load_story_model()
     caption = clean_caption(caption)
 
     prompt = (
-        "Write a short children's story in simple English based on this image description: "
-        f"{caption}. "
-        "Write 5 to 6 sentences. "
-        "The story must be between 50 and 100 words. "
-        "Use easy words for children. "
-        "Include a beginning, a small adventure, and a happy ending. "
-        "Do not repeat the same ideas."
+        f"Image description: {caption}\n"
+        "Task: Write a children's story.\n"
+        "Rules:\n"
+        "- 50 to 100 words\n"
+        "- 5 to 6 sentences\n"
+        "- simple English\n"
+        "- cheerful tone\n"
+        "- happy ending\n"
+        "- no repetition\n"
+        "Story:"
     )
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
@@ -114,8 +123,8 @@ def text2story(caption):
         story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
         word_count = len(story.split())
 
-        if 30 <= word_count <= 120 and not is_too_repetitive(story):
-        return story
+        if 45 <= word_count <= 105 and not is_too_repetitive(story):
+            return story
 
     return (
         "One sunny day, a group of children played happily in the park. "
@@ -125,8 +134,6 @@ def text2story(caption):
         "The owner thanked the children for their kindness and gave them a big smile. "
         "At the end of the day, everyone went home feeling proud, cheerful, and happy."
     )
-
-
 # --------------------------------------------------
 # Function 3: Text to audio
 # --------------------------------------------------
