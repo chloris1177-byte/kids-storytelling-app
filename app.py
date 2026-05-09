@@ -75,11 +75,11 @@ def img2text(uploaded_image):
 # --------------------------------------------------
 def is_too_repetitive(text):
     words = text.lower().split()
-    if len(words) < 20:
+    if len(words) < 15:
         return True
 
     unique_ratio = len(set(words)) / len(words)
-    return unique_ratio < 0.45
+    return unique_ratio < 0.30
 
 
 # --------------------------------------------------
@@ -87,39 +87,43 @@ def is_too_repetitive(text):
 # --------------------------------------------------
 def text2story(caption):
     tokenizer, model = load_story_model()
+    caption = clean_caption(caption)
 
     prompt = (
         "Write a short children's story in simple English based on this image description: "
         f"{caption}. "
-        "Write 5-6 sentences. "
-        "Use clear and easy words for young children. "
+        "Write 5 to 6 sentences. "
         "The story must be between 50 and 100 words. "
-        "Make the story cheerful, complete, and natural. "
-        "Do not repeat the same idea. "
-        "End with a happy ending."
+        "Use easy words for children. "
+        "Include a beginning, a small adventure, and a happy ending. "
+        "Do not repeat the same ideas."
     )
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=100,
-        num_beams=4,
-        no_repeat_ngram_size=3,
-        early_stopping=True
-    )
+    for _ in range(3):
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=90,
+            do_sample=True,
+            temperature=0.8,
+            top_p=0.9,
+            no_repeat_ngram_size=3
+        )
 
-    story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        word_count = len(story.split())
 
-    if len(story.split()) >= 40 and not is_too_repetitive(story):
+        if 30 <= word_count <= 120 and not is_too_repetitive(story):
         return story
 
     return (
-        f"One day, {caption} made everyone smile. "
-        f"The children laughed and played together happily. "
-        f"Soon, they found a fun little adventure in the park. "
-        f"They helped each other and shared a wonderful time. "
-        f"At the end of the day, everyone went home with happy hearts."
+        "One sunny day, a group of children played happily in the park. "
+        "They ran across the grass, laughed together, and enjoyed the warm sunshine. "
+        "Soon, they discovered a small lost puppy near the flowers and decided to help it. "
+        "They looked around carefully and finally found the puppy's owner nearby. "
+        "The owner thanked the children for their kindness and gave them a big smile. "
+        "At the end of the day, everyone went home feeling proud, cheerful, and happy."
     )
 
 
