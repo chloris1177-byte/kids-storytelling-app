@@ -4,9 +4,10 @@ import streamlit as st
 from PIL import Image
 from gtts import gTTS
 from transformers import (
-    pipeline,
     BlipProcessor,
-    BlipForConditionalGeneration
+    BlipForConditionalGeneration,
+    AutoTokenizer,
+    AutoModelForSeq2SeqLM
 )
 
 
@@ -39,15 +40,14 @@ def load_blip_model():
 
 
 # --------------------------------------------------
-# Load FLAN-T5 story generation pipeline
+# Load FLAN-T5 story generation model
 # Model: google/flan-t5-base
 # --------------------------------------------------
 @st.cache_resource
-def load_story_pipeline():
-    return pipeline(
-        task="text2text-generation",
-        model="google/flan-t5-base"
-    )
+def load_story_model():
+    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+    return tokenizer, model
 
 
 # --------------------------------------------------
@@ -86,7 +86,7 @@ def is_too_repetitive(text):
 # Function 2: Text to story
 # --------------------------------------------------
 def text2story(caption):
-    story_generator = load_story_pipeline()
+    tokenizer, model = load_story_model()
 
     prompt = (
         "Write a short children's story in simple English. "
@@ -96,18 +96,20 @@ def text2story(caption):
         f"Base the story on this image description: {caption}"
     )
 
-    result = story_generator(
-        prompt,
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
+
+    outputs = model.generate(
+        **inputs,
         max_new_tokens=120,
         do_sample=True,
-        temperature=0.9
+        temperature=0.9,
+        top_p=0.95
     )
 
-    if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-        story = result[0]["generated_text"].strip()
+    story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-        if len(story.split()) >= 20 and not is_too_repetitive(story):
-            return story
+    if len(story.split()) >= 20 and not is_too_repetitive(story):
+        return story
 
     return (
         f"There was once {caption}. "
