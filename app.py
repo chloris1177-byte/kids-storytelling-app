@@ -45,8 +45,8 @@ def load_blip_model():
 # --------------------------------------------------
 @st.cache_resource
 def load_story_model():
-    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
+    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
     return tokenizer, model
 
 
@@ -79,7 +79,7 @@ def is_too_repetitive(text):
         return True
 
     unique_ratio = len(set(words)) / len(words)
-    return unique_ratio < 0.45
+    return unique_ratio < 0.30
 
 
 # --------------------------------------------------
@@ -103,12 +103,14 @@ def text2story(caption):
     outputs = model.generate(
         **inputs,
         max_new_tokens=100,
-        num_beams=4,
-        no_repeat_ngram_size=3,
-        early_stopping=True
+        min_new_tokens=45,
+        do_sample=True,
+        temperature=0.9,
+        top_p=0.92,
+        no_repeat_ngram_size=3
     )
 
-    story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    story = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].strip()
 
     if len(story.split()) >= 30 and not is_too_repetitive(story):
         return story
