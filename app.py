@@ -91,8 +91,9 @@ def text2story(caption):
     prompt = (
         "Write a short children's story in simple English based on this image description: "
         f"{caption}. "
-        "Write exactly 5 sentences. "
+        "Write 5-6 sentences. "
         "Use clear and easy words for young children. "
+        "The story must be between 50 and 100 words. "
         "Make the story cheerful, complete, and natural. "
         "Do not repeat the same idea. "
         "End with a happy ending."
@@ -110,7 +111,7 @@ def text2story(caption):
 
     story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-    if len(story.split()) >= 20 and not is_too_repetitive(story):
+    if len(story.split()) >= 40 and not is_too_repetitive(story):
         return story
 
     return (
