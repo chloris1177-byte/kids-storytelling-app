@@ -5,12 +5,14 @@ from PIL import Image
 from gtts import gTTS
 from transformers import (
     pipeline,
-    VisionEncoderDecoderModel,
-    ViTImageProcessor,
-    AutoTokenizer
+    BlipProcessor,
+    BlipForConditionalGeneration
 )
 
 
+# --------------------------------------------------
+# Page config
+# --------------------------------------------------
 st.set_page_config(
     page_title="Kids Storytelling App",
     page_icon="📚",
@@ -18,100 +20,107 @@ st.set_page_config(
 )
 
 st.title("📚 Kids Storytelling App")
-st.write("Upload an image and generate a fun children's story with audio!")
+st.write("Upload an image and generate a children's story with audio.")
 
 
+# --------------------------------------------------
+# Load BLIP image captioning model
+# Model: Salesforce/blip-image-captioning-base
+# --------------------------------------------------
 @st.cache_resource
-def load_caption_model():
-    model = VisionEncoderDecoderModel.from_pretrained(
-        "nlpconnect/vit-gpt2-image-captioning"
+def load_blip_model():
+    processor = BlipProcessor.from_pretrained(
+        "Salesforce/blip-image-captioning-base"
     )
-    feature_extractor = ViTImageProcessor.from_pretrained(
-        "nlpconnect/vit-gpt2-image-captioning"
+    model = BlipForConditionalGeneration.from_pretrained(
+        "Salesforce/blip-image-captioning-base"
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        "nlpconnect/vit-gpt2-image-captioning"
-    )
-    return model, feature_extractor, tokenizer
+    return processor, model
 
 
+# --------------------------------------------------
+# Load FLAN-T5 story generation pipeline
+# Model: google/flan-t5-base
+# --------------------------------------------------
 @st.cache_resource
 def load_story_pipeline():
     return pipeline(
-        task="text-generation",
-        model="distilgpt2"
+        task="text2text-generation",
+        model="google/flan-t5-base"
     )
 
 
+# --------------------------------------------------
+# Function 1: Image to text
+# --------------------------------------------------
 def img2text(uploaded_image):
-    model, feature_extractor, tokenizer = load_caption_model()
+    processor, model = load_blip_model()
 
     if uploaded_image.mode != "RGB":
         uploaded_image = uploaded_image.convert("RGB")
 
-    pixel_values = feature_extractor(
-        images=[uploaded_image],
-        return_tensors="pt"
-    ).pixel_values
-
-    output_ids = model.generate(
-        pixel_values,
-        max_length=30,
-        num_beams=5,
-        num_return_sequences=3
+    inputs = processor(images=uploaded_image, return_tensors="pt")
+    output = model.generate(
+        **inputs,
+        max_new_tokens=30,
+        num_beams=5
     )
 
-    captions = [
-        tokenizer.decode(ids, skip_special_tokens=True).strip()
-        for ids in output_ids
-    ]
-
-    caption = max(captions, key=len)
+    caption = processor.decode(output[0], skip_special_tokens=True).strip()
     return caption
 
 
+# --------------------------------------------------
+# Helper: check repetitive output
+# --------------------------------------------------
+def is_too_repetitive(text):
+    words = text.lower().split()
+    if len(words) < 20:
+        return True
+
+    unique_ratio = len(set(words)) / len(words)
+    return unique_ratio < 0.45
+
+
+# --------------------------------------------------
+# Function 2: Text to story
+# --------------------------------------------------
 def text2story(caption):
     story_generator = load_story_pipeline()
 
     prompt = (
-        "Write a short children's story in 50 to 100 words. "
-        "Use simple English for children aged 3 to 10. "
-        "Make the story cheerful, clear, and easy to understand. "
-        "Include a beginning, a fun middle, and a happy ending. "
-        f"The story is about: {caption}. "
-        "Story:"
+        "Write a short children's story in simple English. "
+        "The story should be 50 to 100 words long. "
+        "It should be cheerful, easy to understand, and suitable for children aged 3 to 10. "
+        "It must have a clear beginning, middle, and happy ending. "
+        f"Base the story on this image description: {caption}"
     )
 
     result = story_generator(
         prompt,
         max_new_tokens=120,
         do_sample=True,
-        temperature=0.9,
-        top_k=50,
-        top_p=0.95,
-        num_return_sequences=1
+        temperature=0.9
     )
 
     if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-        full_text = result[0]["generated_text"]
+        story = result[0]["generated_text"].strip()
 
-        if full_text.startswith(prompt):
-            story = full_text[len(prompt):].strip()
-        else:
-            story = full_text.strip()
-
-        if len(story.split()) >= 30:
+        if len(story.split()) >= 20 and not is_too_repetitive(story):
             return story
 
     return (
         f"There was once {caption}. "
-        f"It was a lovely moment, full of curiosity and joy. "
-        f"Soon, a little adventure began, bringing smiles and surprises. "
-        f"Everyone worked together, helped one another, and had lots of fun. "
-        f"In the end, it became a beautiful memory with a happy ending."
+        f"It was a bright and happy day. "
+        f"Soon, a small adventure began and brought smiles to everyone. "
+        f"There was laughter, kindness, and a lovely surprise along the way. "
+        f"In the end, everything turned out beautifully, and everyone went home with happy hearts."
     )
 
 
+# --------------------------------------------------
+# Function 3: Text to audio
+# --------------------------------------------------
 def text2audio(story_text):
     tts = gTTS(text=story_text, lang="en")
     temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -119,11 +128,18 @@ def text2audio(story_text):
     return temp_audio.name
 
 
+# --------------------------------------------------
+# Upload image
+# --------------------------------------------------
 uploaded_file = st.file_uploader(
     "Upload an image",
     type=["jpg", "jpeg", "png"]
 )
 
+
+# --------------------------------------------------
+# Main app
+# --------------------------------------------------
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="Uploaded Image", use_container_width=True)
