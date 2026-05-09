@@ -89,21 +89,23 @@ def text2story(caption):
     tokenizer, model = load_story_model()
 
     prompt = (
-        "Write a short children's story in simple English. "
-        "The story should be 50 to 100 words long. "
-        "It should be cheerful, easy to understand, and suitable for children aged 3 to 10. "
-        "It must have a clear beginning, middle, and happy ending. "
-        f"Base the story on this image description: {caption}"
+        "Write a short children's story in simple English based on this image description: "
+        f"{caption}. "
+        "Write exactly 5 sentences. "
+        "Use clear and easy words for young children. "
+        "Make the story cheerful, complete, and natural. "
+        "Do not repeat the same idea. "
+        "End with a happy ending."
     )
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
     outputs = model.generate(
         **inputs,
-        max_new_tokens=120,
-        do_sample=True,
-        temperature=0.9,
-        top_p=0.95
+        max_new_tokens=100,
+        num_beams=4,
+        no_repeat_ngram_size=3,
+        early_stopping=True
     )
 
     story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
@@ -112,11 +114,11 @@ def text2story(caption):
         return story
 
     return (
-        f"There was once {caption}. "
-        f"It was a bright and happy day. "
-        f"Soon, a small adventure began and brought smiles to everyone. "
-        f"There was laughter, kindness, and a lovely surprise along the way. "
-        f"In the end, everything turned out beautifully, and everyone went home with happy hearts."
+        f"One day, {caption} made everyone smile. "
+        f"The children laughed and played together happily. "
+        f"Soon, they found a fun little adventure in the park. "
+        f"They helped each other and shared a wonderful time. "
+        f"At the end of the day, everyone went home with happy hearts."
     )
 
 
