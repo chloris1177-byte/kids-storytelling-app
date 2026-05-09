@@ -1,2 +1,7 @@
-streamlit
-gTTS
+streamlit==1.38.0
+transformers==4.44.2
+torch==2.4.1
+pillow==10.4.0
+gTTS==2.5.3
+sentencepiece==0.2.0
+protobuf==4.25.3
