@@ -1,15 +1,14 @@
 import os
 import tempfile
+import requests
 from PIL import Image
-
-import streamlit as st
-from transformers import pipeline
 from gtts import gTTS
+import streamlit as st
 
 
-# -----------------------------
+# --------------------------------------------------
 # Page configuration
-# -----------------------------
+# --------------------------------------------------
 st.set_page_config(
     page_title="Kids Storytelling App",
     page_icon="📚",
@@ -17,107 +16,108 @@ st.set_page_config(
 )
 
 
-# -----------------------------
-# Load Hugging Face pipelines
-# Use cache_resource so models are loaded only once
-# -----------------------------
-@st.cache_resource
-def load_image_caption_model():
-    """
-    Load the Hugging Face image-to-text pipeline.
-    This model generates a caption from an uploaded image.
-    """
-    return pipeline(
-        task="image-to-text",
-        model="Salesforce/blip-image-captioning-base"
-    )
+# --------------------------------------------------
+# Hugging Face API configuration
+# Store your Hugging Face token in Streamlit Secrets:
+# HF_TOKEN = "your_token_here"
+# --------------------------------------------------
+HF_TOKEN = st.secrets["HF_TOKEN"]
+
+IMAGE_MODEL_URL = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
+TEXT_MODEL_URL = "https://api-inference.huggingface.co/models/distilgpt2"
+
+HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}"
+}
 
 
-@st.cache_resource
-def load_story_model():
+# --------------------------------------------------
+# Function 1: Generate image caption
+# --------------------------------------------------
+def img2text(image_bytes):
     """
-    Load the Hugging Face text generation pipeline.
-    This model expands a short caption into a short children's story.
-    """
-    return pipeline(
-        task="text-generation",
-        model="distilgpt2"
-    )
-
-
-# -----------------------------
-# Function 1: image to caption
-# -----------------------------
-def img2text(image):
-    """
-    Generate a caption from the uploaded image using a Hugging Face model.
+    Use a Hugging Face image captioning model to generate
+    a caption from the uploaded image.
 
     Parameters:
-        image: PIL image object
+        image_bytes (bytes): uploaded image in bytes
 
     Returns:
-        str: generated caption
+        str: generated image caption
     """
-    image_to_text_model = load_image_caption_model()
-    result = image_to_text_model(image)
-    caption = result[0]["generated_text"]
-    return caption
+    response = requests.post(
+        IMAGE_MODEL_URL,
+        headers=HEADERS,
+        data=image_bytes,
+        timeout=60
+    )
+    response.raise_for_status()
+    result = response.json()
+
+    if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
+        return result[0]["generated_text"]
+
+    raise ValueError(f"Unexpected image caption response: {result}")
 
 
-# -----------------------------
-# Function 2: caption to story
-# -----------------------------
+# --------------------------------------------------
+# Function 2: Generate story from caption
+# --------------------------------------------------
 def text2story(caption):
     """
-    Generate a short kid-friendly story based on the image caption.
+    Use a Hugging Face text generation model to generate
+    a short children's story based on the image caption.
 
     Parameters:
-        caption (str): image caption generated from Hugging Face model
+        caption (str): generated image caption
 
     Returns:
         str: generated story
     """
-    story_generator = load_story_model()
-
     prompt = (
-        f"Write a short, simple, happy children's story in 60 to 90 words "
-        f"for kids aged 3 to 10 based on this scene: {caption}. "
-        f"The story should be friendly, imaginative, and easy to understand."
+        f"Write a happy and simple children's story in 50 to 100 words "
+        f"for kids aged 3 to 10. "
+        f"Base the story on this image description: {caption}. "
+        f"Use easy words, a friendly tone, and a clear ending."
     )
 
-    result = story_generator(
-        prompt,
-        max_new_tokens=90,
-        num_return_sequences=1,
-        temperature=0.9,
-        do_sample=True,
-        truncation=True,
-        pad_token_id=50256
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 80,
+            "temperature": 0.9,
+            "return_full_text": False
+        }
+    }
+
+    response = requests.post(
+        TEXT_MODEL_URL,
+        headers=HEADERS,
+        json=payload,
+        timeout=60
     )
+    response.raise_for_status()
+    result = response.json()
 
-    generated_text = result[0]["generated_text"]
+    if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
+        story = result[0]["generated_text"].strip()
+        return story
 
-    # Remove the prompt part if it appears at the beginning
-    if generated_text.startswith(prompt):
-        story = generated_text[len(prompt):].strip()
-    else:
-        story = generated_text.strip()
-
-    return story
+    raise ValueError(f"Unexpected text generation response: {result}")
 
 
-# -----------------------------
-# Function 3: story to audio
-# -----------------------------
+# --------------------------------------------------
+# Function 3: Convert story text to audio
+# --------------------------------------------------
 def text2audio(story_text):
     """
-    Convert story text to speech using gTTS.
+    Convert the generated story into speech using gTTS.
 
     Parameters:
-        story_text (str): story text
+        story_text (str): generated story text
 
     Returns:
-        str: path to temporary mp3 file
+        str: path to temporary audio file
     """
     tts = gTTS(text=story_text, lang="en")
     temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -125,57 +125,61 @@ def text2audio(story_text):
     return temp_audio.name
 
 
-# -----------------------------
-# Streamlit UI
-# -----------------------------
+# --------------------------------------------------
+# Streamlit user interface
+# --------------------------------------------------
 st.title("📚 Kids Storytelling App")
-st.write("Upload an image and let Hugging Face create a fun story for kids!")
+st.write("Upload an image and generate a fun story using Hugging Face!")
 
 uploaded_file = st.file_uploader(
-    "Choose an image",
+    "Upload an image",
     type=["jpg", "jpeg", "png"]
 )
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
-
     st.image(image, caption="Uploaded Image", use_container_width=True)
 
     if st.button("Generate Story"):
-        with st.spinner("Analyzing image and creating story..."):
-            # Step 1: image captioning
-            caption = img2text(image)
+        try:
+            with st.spinner("Generating caption, story, and audio..."):
+                image_bytes = uploaded_file.getvalue()
 
-            # Step 2: story generation
-            story = text2story(caption)
+                # Step 1: image captioning
+                caption = img2text(image_bytes)
 
-            # Step 3: text to speech
-            audio_path = text2audio(story)
+                # Step 2: story generation
+                story = text2story(caption)
 
-        st.success("Story generated successfully!")
+                # Step 3: text-to-speech
+                audio_path = text2audio(story)
 
-        st.subheader("🖼️ Image Caption")
-        st.write(caption)
+            st.success("Story generated successfully!")
 
-        st.subheader("✨ Story")
-        st.write(story)
+            st.subheader("🖼️ Image Caption")
+            st.write(caption)
 
-        word_count = len(story.split())
-        st.write(f"**Word count:** {word_count}")
+            st.subheader("✨ Story")
+            st.write(story)
+            st.write(f"**Word count:** {len(story.split())}")
 
-        st.subheader("🔊 Story Audio")
-        with open(audio_path, "rb") as audio_file:
-            audio_bytes = audio_file.read()
-            st.audio(audio_bytes, format="audio/mp3")
+            st.subheader("🔊 Story Audio")
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+                st.audio(audio_bytes, format="audio/mp3")
 
-            st.download_button(
-                label="Download Audio",
-                data=audio_bytes,
-                file_name="story.mp3",
-                mime="audio/mpeg"
-            )
+                st.download_button(
+                    label="Download Audio",
+                    data=audio_bytes,
+                    file_name="story.mp3",
+                    mime="audio/mpeg"
+                )
 
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+
 else:
     st.info("Please upload an image to begin.")
