@@ -35,10 +35,9 @@ def load_image_caption_pipeline():
 
 
 @st.cache_resource
-def load_story_pipeline():
+def load_image_caption_pipeline():
     return pipeline(
-        task="text-generation",
-        model="distilgpt2"
+        model="Salesforce/blip-image-captioning-base"
     )
 
 
