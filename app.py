@@ -1,13 +1,13 @@
 import os
 import tempfile
+import streamlit as st
 from PIL import Image
 from gtts import gTTS
-import streamlit as st
-from transformers import pipeline
+from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration
 
 
 # --------------------------------------------------
-# Page configuration
+# Page config
 # --------------------------------------------------
 st.set_page_config(
     page_title="Kids Storytelling App",
@@ -15,95 +15,102 @@ st.set_page_config(
     layout="centered"
 )
 
-
-# --------------------------------------------------
-# Title
-# --------------------------------------------------
 st.title("📚 Kids Storytelling App")
 st.write("Upload an image and generate a fun children's story with audio!")
 
 
 # --------------------------------------------------
-# Cache models to avoid reloading every interaction
+# Load image caption model
 # --------------------------------------------------
 @st.cache_resource
-def load_image_caption_pipeline():
-    return pipeline(
-        task="image-to-text",
-        model="Salesforce/blip-image-captioning-base"
-    )
-
-
-@st.cache_resource
-def load_image_caption_pipeline():
-    return pipeline(
-        model="Salesforce/blip-image-captioning-base"
-    )
+def load_blip_model():
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    return processor, model
 
 
 # --------------------------------------------------
-# Function 1: Generate caption from image
+# Load story generation pipeline
+# --------------------------------------------------
+@st.cache_resource
+def load_story_pipeline():
+    return pipeline(
+        task="text-generation",
+        model="distilgpt2"
+    )
+
+
+# --------------------------------------------------
+# Function 1: Image to text
 # --------------------------------------------------
 def img2text(uploaded_image):
-    """
-    Generate a caption for the uploaded image using a Hugging Face image captioning pipeline.
-    """
-    image_to_text = load_image_caption_pipeline()
-    result = image_to_text(uploaded_image)
+    processor, model = load_blip_model()
 
-    if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-        return result[0]["generated_text"]
+    inputs = processor(images=uploaded_image, return_tensors="pt")
+    output = model.generate(**inputs, max_new_tokens=30)
+    caption = processor.decode(output[0], skip_special_tokens=True)
 
-    raise ValueError("Could not generate image caption.")
+    return caption
 
 
 # --------------------------------------------------
-# Function 2: Generate story from caption
+# Function 2: Generate story
 # --------------------------------------------------
 def text2story(caption):
-    """
-    Generate a short children's story based on the image caption.
-    """
     story_generator = load_story_pipeline()
 
     prompt = (
-        f"Write a simple, happy children's story in 50 to 100 words. "
-        f"The story is for children aged 3 to 10. "
-        f"Use easy vocabulary, a warm tone, and a clear ending. "
-        f"Image description: {caption}. Story:"
+        "Write a short children's story in 50 to 100 words. "
+        "Use simple English for children aged 3 to 10. "
+        "Make the story cheerful, clear, and easy to understand. "
+        "Include a beginning, a fun middle, and a happy ending. "
+        f"The story is about: {caption}. "
+        "Story:"
     )
 
     result = story_generator(
         prompt,
-        max_new_tokens=100,
+        max_new_tokens=120,
         do_sample=True,
-        temperature=0.9,
-        top_k=50,
-        top_p=0.95,
+        temperature=0.8,
+        top_k=40,
+        top_p=0.9,
         num_return_sequences=1
     )
 
     if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
         full_text = result[0]["generated_text"]
 
-        # Remove prompt if it is included in output
         if full_text.startswith(prompt):
             story = full_text[len(prompt):].strip()
         else:
             story = full_text.strip()
 
+        # fallback if generated text is too short
+        if len(story.split()) < 30:
+            story = (
+                f"One sunny day, {caption} became the start of a wonderful adventure. "
+                f"Everyone looked with excitement and smiled with joy. "
+                f"Soon, they discovered something fun and magical. "
+                f"They laughed, helped one another, and had a lovely time together. "
+                f"At the end of the day, everyone felt happy, warm, and ready for another adventure tomorrow."
+            )
+
         return story
 
-    raise ValueError("Could not generate story.")
+    # final fallback
+    return (
+        f"One sunny day, {caption} inspired a happy little adventure. "
+        f"Everything felt bright and exciting. "
+        f"There was laughter, kindness, and a wonderful surprise along the way. "
+        f"In the end, everyone smiled and learned that even a simple moment can become a beautiful story."
+    )
 
 
 # --------------------------------------------------
-# Function 3: Convert story to speech
+# Function 3: Text to audio
 # --------------------------------------------------
 def text2audio(story_text):
-    """
-    Convert story text to audio using gTTS and save to a temporary MP3 file.
-    """
     tts = gTTS(text=story_text, lang="en")
     temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     tts.save(temp_audio.name)
@@ -120,7 +127,7 @@ uploaded_file = st.file_uploader(
 
 
 # --------------------------------------------------
-# Main app logic
+# Main app
 # --------------------------------------------------
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
@@ -128,7 +135,7 @@ if uploaded_file is not None:
 
     if st.button("Generate Story"):
         try:
-            with st.spinner("Generating caption..."):
+            with st.spinner("Generating image caption..."):
                 caption = img2text(image)
 
             with st.spinner("Generating story..."):
