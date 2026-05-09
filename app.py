@@ -1,5 +1,4 @@
 import os
-import re
 import tempfile
 import streamlit as st
 from PIL import Image
@@ -72,72 +71,15 @@ def img2text(uploaded_image):
 
 
 # --------------------------------------------------
-# Helper: clean caption
-# --------------------------------------------------
-def clean_caption(caption):
-    caption = caption.strip().lower()
-
-    remove_words = {
-        "illustration", "drawing", "cartoon", "painting",
-        "art", "image", "picture"
-    }
-
-    words = [w for w in caption.split() if w not in remove_words]
-    cleaned = " ".join(words).strip()
-
-    if cleaned:
-        return cleaned[0].upper() + cleaned[1:]
-
-    return caption
-
-
-# --------------------------------------------------
-# Helper: repetition check
+# Helper: check repetitive output
 # --------------------------------------------------
 def is_too_repetitive(text):
-    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
-
-    if len(words) < 15:
+    words = text.lower().split()
+    if len(words) < 20:
         return True
 
     unique_ratio = len(set(words)) / len(words)
-    return unique_ratio < 0.28
-
-
-# --------------------------------------------------
-# Helper: score story quality
-# --------------------------------------------------
-def score_story(story):
-    words = re.findall(r"\b[a-zA-Z]+\b", story)
-    word_count = len(words)
-
-    score = 0
-
-    # Prefer target range
-    if 50 <= word_count <= 100:
-        score += 3
-    elif 45 <= word_count <= 105:
-        score += 2
-    elif 40 <= word_count <= 110:
-        score += 1
-
-    # Prefer non-repetitive text
-    if not is_too_repetitive(story):
-        score += 2
-
-    # Prefer multiple sentences
-    sentence_count = len(re.findall(r"[.!?]", story))
-    if 4 <= sentence_count <= 7:
-        score += 2
-    elif 3 <= sentence_count <= 8:
-        score += 1
-
-    # Prefer stories with a simple ending cue
-    ending_words = ["happy", "smile", "smiled", "joy", "home", "laughed", "thank"]
-    if any(word in story.lower() for word in ending_words):
-        score += 1
-
-    return score, word_count
+    return unique_ratio < 0.45
 
 
 # --------------------------------------------------
@@ -145,39 +87,104 @@ def score_story(story):
 # --------------------------------------------------
 def text2story(caption):
     tokenizer, model = load_story_model()
-    clean_cap = clean_caption(caption)
 
     prompt = (
-        f"Write a short children's story in simple English about this scene: {clean_cap}. "
-        "Use 5 to 6 sentences and 50 to 100 words. "
-        "Include a small adventure and a happy ending."
+        "Write a short children's story in simple English based on this image description: "
+        f"{caption}. "
+        "Write 5-6 sentences. "
+        "Use clear and easy words for young children. "
+        "Make the story cheerful, complete, and natural. "
+        "Do not repeat the same idea. "
+        "End with a happy ending."
     )
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
-    candidates = []
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=100,
+        num_beams=4,
+        no_repeat_ngram_size=3,
+        early_stopping=True
+    )
 
-    for _ in range(5):
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=90,
-            min_new_tokens=45,
-            do_sample=True,
-            temperature=0.9,
-            top_p=0.92,
-            no_repeat_ngram_size=3
-        )
+    story = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-        story = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].strip()
-        score, word_count = score_story(story)
-        candidates.append((story, score, word_count))
+    if len(story.split()) >= 30 and not is_too_repetitive(story):
+        return story
 
-        # Good enough -> return immediately
-        if score >= 6:
-            return story, candidates, False
+    return (
+        f"One day, {caption} made everyone smile. "
+        f"The children laughed and played together happily. "
+        f"Soon, they found a fun little adventure in the park. "
+        f"They helped each other and shared a wonderful time. "
+        f"At the end of the day, everyone went home with happy hearts."
+    )
 
-    # If none are excellent, return the best generated story
-    if candidates:
-        best_story, best_score, best_word_count = max(candidates, key=lambda x: x[1])
 
-        # If at least somewhat acceptable, use model
+# --------------------------------------------------
+# Function 3: Text to audio
+# --------------------------------------------------
+def text2audio(story_text):
+    tts = gTTS(text=story_text, lang="en")
+    temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(temp_audio.name)
+    return temp_audio.name
+
+
+# --------------------------------------------------
+# Upload image
+# --------------------------------------------------
+uploaded_file = st.file_uploader(
+    "Upload an image",
+    type=["jpg", "jpeg", "png"]
+)
+
+
+# --------------------------------------------------
+# Main app
+# --------------------------------------------------
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Image", use_container_width=True)
+
+    if st.button("Generate Story"):
+        try:
+            with st.spinner("Generating image caption..."):
+                caption = img2text(image)
+
+            with st.spinner("Generating story..."):
+                story = text2story(caption)
+
+            with st.spinner("Generating audio..."):
+                audio_path = text2audio(story)
+
+            st.success("Story generated successfully!")
+
+            st.subheader("🖼️ Image Caption")
+            st.write(caption)
+
+            st.subheader("✨ Story")
+            st.write(story)
+            st.write(f"**Word count:** {len(story.split())}")
+
+            st.subheader("🔊 Story Audio")
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+                st.audio(audio_bytes, format="audio/mp3")
+
+                st.download_button(
+                    label="Download Audio",
+                    data=audio_bytes,
+                    file_name="kids_story.mp3",
+                    mime="audio/mpeg"
+                )
+
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+
+else:
+    st.info("Please upload an image to begin.")
